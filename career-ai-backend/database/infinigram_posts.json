@@ -1,0 +1,46 @@
+{
+  "posts": [
+    {
+      "id": "1770456883999ujdjcaqy3",
+      "userId": "1770456845134",
+      "username": "irfan",
+      "userPhoto": "",
+      "caption": "farfwerfaef",
+      "description": "ewfaewrf",
+      "content": "http://localhost:5000/uploads/images/gshan_zenza_gmail_com_1770456873821.png",
+      "media": "http://localhost:5000/uploads/images/gshan_zenza_gmail_com_1770456873821.png",
+      "mediaType": "image",
+      "mediaPath": "http://localhost:5000/uploads/images/gshan_zenza_gmail_com_1770456873821.png",
+      "fileName": "http://localhost:5000/uploads/images/gshan_zenza_gmail_com_1770456873821.png",
+      "timestamp": "2026-02-07T09:34:43.999Z",
+      "likes": 0,
+      "comments": 0,
+      "liked": false,
+      "saved": false,
+      "likedBy": [],
+      "savedBy": [],
+      "commentsList": []
+    },
+    {
+      "id": "17703085927531dwsdrbgf",
+      "userId": "1769999699408",
+      "username": "one",
+      "userPhoto": "",
+      "caption": "ddgd",
+      "description": "gdrgdrg",
+      "content": "http://localhost:5000/uploads/videos/one_gmail_com_1770308587619.webm",
+      "media": "http://localhost:5000/uploads/videos/one_gmail_com_1770308587619.webm",
+      "mediaType": "video",
+      "mediaPath": "http://localhost:5000/uploads/videos/one_gmail_com_1770308587619.webm",
+      "fileName": "http://localhost:5000/uploads/videos/one_gmail_com_1770308587619.webm",
+      "timestamp": "2026-02-05T16:23:12.753Z",
+      "likes": 0,
+      "comments": 0,
+      "liked": false,
+      "saved": false,
+      "likedBy": [],
+      "savedBy": [],
+      "commentsList": []
+    }
+  ]
+}

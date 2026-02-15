@@ -1,0 +1,24 @@
+{
+  "goal": "Become a ISRO engineer",
+  "Goal_Specialization": "Computer Science Engineering",
+  "Number_of_hours_available_per_week": 16,
+  "Aimed_Year_of_Achievement": 2027,
+  "age": 21,
+  "gender": "Male",
+  "country": "India",
+  "current_status": "Student",
+  "hours_per_day": 2,
+  "constraints": "I don't know where to start",
+  "education": {
+    "highest_level": "Bachelor's",
+    "degree_name": "Bachelor of Technology (B.Tech)",
+    "field": "Engineering",
+    "specialization": "Electronics and Communication Engineering",
+    "year": "3rd year"
+  },
+  "is_clarification_response": true,
+  "clarification_answers": {
+    "programming_exposure": "Java, python",
+    "Preparation_level": "Started Computer Science Course from youtube"
+  }
+}
