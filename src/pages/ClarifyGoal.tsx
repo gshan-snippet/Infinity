@@ -295,6 +295,8 @@ const ClarifyGoal = () => {
     let requestId: string = '';
     let pollInterval: NodeJS.Timeout | null = null;
     let isComplete = false;
+    let hasFailed = false;
+    let failureMessage = '';
 
     try {
       console.log('📤 Sending roadmap generation request...');
@@ -342,13 +344,15 @@ const ClarifyGoal = () => {
 
       console.log('📌 Received requestId from server:', requestId);
 
-      if (!requestId) {
-        throw new Error('Failed to get request ID from server');
+      if (!initialResponse.ok || !requestId) {
+        throw new Error(initialData?.error || 'Failed to get request ID from server');
       }
 
       // Now start polling for progress
       let finalData = null;
       let pollCount = 0;
+      let lastCompletedSections = 0;
+      let lastCurrentSection = 1;
 
       pollInterval = setInterval(async () => {
         pollCount++;
@@ -361,8 +365,27 @@ const ClarifyGoal = () => {
 
           console.log(`📊 [Poll ${pollCount}] Progress:`, progressData);
 
-          setCompletedSections(progressData.completedSections || 0);
-          setCurrentSection(progressData.currentSection || 0);
+          const polledCompletedSections =
+            typeof progressData.completedSections === 'number'
+              ? progressData.completedSections
+              : lastCompletedSections;
+          const polledCurrentSection =
+            typeof progressData.currentSection === 'number'
+              ? progressData.currentSection
+              : lastCurrentSection;
+
+          // Keep progress monotonic so stale/partial responses do not reset the UI.
+          lastCompletedSections = Math.max(lastCompletedSections, polledCompletedSections);
+          lastCurrentSection = Math.max(lastCurrentSection, polledCurrentSection);
+
+          setCompletedSections(lastCompletedSections);
+          setCurrentSection(lastCurrentSection);
+
+          if (progressData.status === 'failed') {
+            hasFailed = true;
+            failureMessage = progressData.error || 'Roadmap generation failed';
+            return;
+          }
 
           // Check if generation is complete
           if (progressData.status === 'complete' && progressData.data) {
@@ -380,13 +403,17 @@ const ClarifyGoal = () => {
       const maxWait = 300000; // 5 minutes max
       const startTime = Date.now();
 
-      while (!isComplete && Date.now() - startTime < maxWait) {
+      while (!isComplete && !hasFailed && Date.now() - startTime < maxWait) {
         await new Promise(resolve => setTimeout(resolve, 1000));
         waitCount++;
       }
 
       if (pollInterval) {
         clearInterval(pollInterval);
+      }
+
+      if (hasFailed) {
+        throw new Error(failureMessage);
       }
 
       if (!isComplete || !finalData) {

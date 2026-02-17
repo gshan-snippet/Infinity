@@ -28,6 +28,8 @@ CRITICAL RULES:
 - Avoid formal/generic motivational language
 - Keep each item short (1-3 lines max)
 - Use real-world actionable suggestions
+- Return exactly one "solutions" row per input issue (same count as USER ISSUES)
+- Preserve each issue label in "issue_type" exactly as provided in USER ISSUES
 - If money issue exists: include low/no-cost alternatives and relevant government funding/scholarship/loan options where applicable
 - If resources issue exists: include direct links to useful resources
 - If competition anxiety exists: include realistic facts + winner behavior pattern

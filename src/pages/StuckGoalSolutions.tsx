@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Loader2, Sparkles } from 'lucide-react';
@@ -36,6 +36,29 @@ const StuckGoalSolutions = () => {
   const [error, setError] = useState<string | null>(null);
   const [solutionPack, setSolutionPack] = useState<SolutionPack | null>(preloadedPack);
   const activitySavedRef = useRef(false);
+
+  const displaySolutions = useMemo(() => {
+    const rawSolutions = Array.isArray(solutionPack?.solutions) ? solutionPack.solutions : [];
+    if (!Array.isArray(issues) || issues.length === 0) return rawSolutions;
+
+    const findMatch = (issueType: string) => {
+      const normalized = issueType.toLowerCase().trim();
+      return rawSolutions.find((row) => {
+        const rowType = String(row?.issue_type || '').toLowerCase().trim();
+        return rowType === normalized || rowType.includes(normalized) || normalized.includes(rowType);
+      });
+    };
+
+    return issues.map((issue) => {
+      const issueType = issue.issue_type || 'Issue';
+      const matched = findMatch(issueType);
+      return {
+        issue_type: issueType,
+        solution: matched?.solution || 'Start with one small measurable action for this blocker today, then review and improve every 2 days.',
+        links: matched?.links || []
+      };
+    });
+  }, [issues, solutionPack]);
 
   useEffect(() => {
     const run = async () => {
@@ -162,7 +185,7 @@ const StuckGoalSolutions = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {(solutionPack.solutions || []).map((row, idx) => (
+                    {displaySolutions.map((row, idx) => (
                       <tr key={`${row.issue_type}-${idx}`} className="border-b border-slate-200/70 last:border-b-0">
                         <td className="px-6 py-5 align-top">
                           <p className="font-bold text-slate-900">{row.issue_type}</p>
@@ -193,7 +216,7 @@ const StuckGoalSolutions = () => {
             </motion.div>
 
             <div className="space-y-3 md:hidden">
-              {(solutionPack.solutions || []).map((row, idx) => (
+              {displaySolutions.map((row, idx) => (
                 <div key={`${row.issue_type}-${idx}`} className="rounded-2xl border border-white/50 bg-white/90 p-4">
                   <p className="font-bold text-slate-900">{row.issue_type}</p>
                   <p className="mt-2 text-sm text-slate-700 leading-relaxed">{row.solution}</p>

@@ -1,4 +1,4 @@
-import dotenv from "dotenv";
+﻿import dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
@@ -93,7 +93,7 @@ function loadInfinigamPostsDB() {
 function saveInfinigamPostsDB(data) {
   try {
     fs.writeFileSync(INFINIGRAM_POSTS_FILE, JSON.stringify(data, null, 2), 'utf-8');
-    console.log('✅ Infinigram posts saved to database');
+    console.log('âœ… Infinigram posts saved to database');
   } catch (err) {
     console.error('Error saving infinigram posts:', err);
   }
@@ -120,7 +120,7 @@ function loadMessages() {
 function saveMessages(data) {
   try {
     fs.writeFileSync(INFINIGRAM_MESSAGES_FILE, JSON.stringify(data, null, 2), 'utf-8');
-    console.log('✅ Infinigram messages saved to database');
+    console.log('âœ… Infinigram messages saved to database');
   } catch (err) {
     console.error('Error saving infinigram messages:', err);
   }
@@ -145,7 +145,7 @@ function loadUsers() {
 function saveUsers(users) {
   try {
     fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf-8');
-    console.log('✅ Users saved');
+    console.log('âœ… Users saved');
   } catch (err) {
     console.error('Error saving users:', err);
   }
@@ -168,7 +168,7 @@ function loadActivities() {
 function saveActivities(activities) {
   try {
     fs.writeFileSync(ACTIVITIES_FILE, JSON.stringify(activities, null, 2), 'utf-8');
-    console.log('✅ Activities saved');
+    console.log('âœ… Activities saved');
   } catch (err) {
     console.error('Error saving activities:', err);
   }
@@ -191,36 +191,280 @@ function extractBalancedJson(text) {
   throw new Error("Unbalanced JSON");
 }
 
-async function runPrompt(prompt, maxTokens = 3000) {
-  try {
-    console.log(`⏳ Calling Gemini API with ${maxTokens} max tokens...`);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-    const result = await model.generateContent(
-      [SYSTEM_PROMPT, prompt],
-      { temperature: 0.2, maxOutputTokens: maxTokens }
-    );
+function isRateLimitError(err) {
+  const message = String(err?.message || "").toLowerCase();
+  return err?.status === 429 || message.includes("too many requests") || message.includes("quota exceeded");
+}
 
-    console.log(`✅ Got response from Gemini API`);
-
-    const raw = result.response.text();
-    console.log(`📝 Raw response length: ${raw.length} chars`);
-    console.log(`📝 First 300 chars: ${raw.substring(0, 300)}`);
-
-    const cleaned = stripCodeFences(raw);
-    console.log(`🧹 Cleaned response length: ${cleaned.length} chars`);
-
-    const extracted = extractBalancedJson(cleaned);
-    console.log(`📦 Extracted JSON length: ${extracted.length} chars`);
-
-    const parsed = JSON.parse(extracted);
-    console.log(`✅ Successfully parsed JSON, keys: ${Object.keys(parsed).join(', ')}`);
-
-    return parsed;
-  } catch (err) {
-    console.error(`❌ ERROR in runPrompt: ${err.message}`);
-    console.error(`Stack trace:`, err.stack);
-    throw err;
+function getRetryDelayMs(err) {
+  const details = Array.isArray(err?.errorDetails) ? err.errorDetails : [];
+  const retryInfo = details.find((item) =>
+    String(item?.["@type"] || "").includes("google.rpc.RetryInfo")
+  );
+  const retryDelay = retryInfo?.retryDelay;
+  if (typeof retryDelay === "string") {
+    if (retryDelay.endsWith("s")) {
+      const seconds = Number(retryDelay.replace("s", ""));
+      if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+    }
+    const ms = Number(retryDelay);
+    if (Number.isFinite(ms) && ms >= 0) return ms;
   }
+  return 1200;
+}
+
+async function runPrompt(prompt, maxTokens = 3000) {
+  const maxAttempts = 2;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      console.log(`⏳ Calling Gemini API with ${maxTokens} max tokens...`);
+
+      const result = await model.generateContent(
+        [SYSTEM_PROMPT, prompt],
+        { temperature: 0.2, maxOutputTokens: maxTokens }
+      );
+
+      console.log(`✅ Got response from Gemini API`);
+
+      const raw = result.response.text();
+      console.log(`📝 Raw response length: ${raw.length} chars`);
+      console.log(`📝 First 300 chars: ${raw.substring(0, 300)}`);
+
+      const cleaned = stripCodeFences(raw);
+      console.log(`🧹 Cleaned response length: ${cleaned.length} chars`);
+
+      const extracted = extractBalancedJson(cleaned);
+      console.log(`📦 Extracted JSON length: ${extracted.length} chars`);
+
+      const parsed = JSON.parse(extracted);
+      console.log(`✅ Successfully parsed JSON, keys: ${Object.keys(parsed).join(", ")}`);
+
+      return parsed;
+    } catch (err) {
+      lastError = err;
+      console.error(`❌ ERROR in runPrompt (attempt ${attempt}/${maxAttempts}): ${err.message}`);
+
+      if (attempt < maxAttempts && isRateLimitError(err)) {
+        const retryDelayMs = Math.min(getRetryDelayMs(err), 5000);
+        console.log(`⏱️ Rate limit detected, retrying in ${retryDelayMs}ms...`);
+        await sleep(retryDelayMs);
+        continue;
+      }
+
+      break;
+    }
+  }
+
+  console.error(`Stack trace:`, lastError?.stack);
+  throw lastError;
+}
+
+function normalizeStuckSolutionPack(payload = {}, result = {}) {
+  const fallbackMessage = "Unable to generate full AI details right now. Start with one small, consistent action on this issue today.";
+  const selectedIssues = Array.isArray(payload?.issues) ? payload.issues : [];
+  const pack = result?.stuck_solution_pack && typeof result.stuck_solution_pack === "object"
+    ? result.stuck_solution_pack
+    : {};
+  const aiSolutions = Array.isArray(pack.solutions) ? pack.solutions : [];
+
+  const isValidUrl = (value) => {
+    try {
+      new URL(value);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const sanitizeLinks = (links) => {
+    if (!Array.isArray(links)) return [];
+    return links
+      .filter((item) => item && typeof item === "object")
+      .map((item) => ({
+        label: String(item.label || "Resource").trim() || "Resource",
+        url: String(item.url || "").trim()
+      }))
+      .filter((item) => isValidUrl(item.url));
+  };
+
+  const findMatchingSolution = (issueType) => {
+    const normalizedIssue = String(issueType || "").toLowerCase().trim();
+    if (!normalizedIssue) return null;
+
+    const exact = aiSolutions.find((row) =>
+      String(row?.issue_type || "").toLowerCase().trim() === normalizedIssue
+    );
+    if (exact) return exact;
+
+    return aiSolutions.find((row) =>
+      String(row?.issue_type || "").toLowerCase().includes(normalizedIssue) ||
+      normalizedIssue.includes(String(row?.issue_type || "").toLowerCase())
+    ) || null;
+  };
+
+  let normalizedSolutions = [];
+
+  if (selectedIssues.length > 0) {
+    normalizedSolutions = selectedIssues.map((issue) => {
+      const issueType = String(issue?.issue_type || "Issue").trim() || "Issue";
+      const matched = findMatchingSolution(issueType);
+      const context = String(issue?.context || "").trim();
+      const intensity = Number(issue?.intensity || 0);
+
+      const fallback = context
+        ? `Start with this blocker first: ${context}. Break it into one step you can finish in 30-60 minutes, then repeat daily.`
+        : `Treat "${issueType}" as priority. Convert it into one measurable action this week, then review progress every 2 days.`;
+
+      const solution = String(matched?.solution || "").trim() || fallback;
+      const links = sanitizeLinks(matched?.links);
+
+      return {
+        issue_type: issueType,
+        solution: intensity >= 8 ? `${solution} Keep the first step very small to avoid burnout.` : solution,
+        links
+      };
+    });
+  } else {
+    normalizedSolutions = aiSolutions
+      .filter((row) => row && typeof row === "object")
+      .slice(0, 6)
+      .map((row) => ({
+        issue_type: String(row.issue_type || "Issue").trim() || "Issue",
+        solution: String(row.solution || "").trim() || fallbackMessage,
+        links: sanitizeLinks(row.links)
+      }));
+  }
+
+  if (normalizedSolutions.length === 0) {
+    normalizedSolutions = [
+      {
+        issue_type: "General blocker",
+        solution: fallbackMessage,
+        links: []
+      }
+    ];
+  }
+
+  let quickSummary = Array.isArray(pack.quick_summary)
+    ? pack.quick_summary.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 4)
+    : [];
+
+  if (quickSummary.length === 0) {
+    quickSummary = normalizedSolutions
+      .slice(0, 3)
+      .map((row) => row.solution)
+      .filter(Boolean);
+  }
+
+  return {
+    stuck_solution_pack: {
+      quick_summary: quickSummary,
+      solutions: normalizedSolutions
+    }
+  };
+}
+
+function buildFallbackNoGoalSummary(payload = {}) {
+  const q1 = Array.isArray(payload.question1) ? payload.question1 : [];
+  const q2 = Array.isArray(payload.question2) ? payload.question2 : [];
+  const q3 = Array.isArray(payload.question3) ? payload.question3 : [];
+  const avoidText = q1.length ? q1.join(", ") : "highly repetitive and misaligned work";
+  const gravity = q2[0] || "a practical, balanced role";
+  const success = q3[0] || "stability with meaningful growth";
+
+  return {
+    personalized_summary: {
+      title: "Based on your answers, here's what we understand about you",
+      identity_archetype: "Practical Growth Seeker",
+      summary_points: [
+        `You are clear about avoiding ${avoidText}, which helps narrow down better-fit careers quickly.`,
+        `Your natural pull toward ${gravity} suggests strong intrinsic motivation when work feels purposeful.`,
+        `Your success definition points to ${success}, so long-term fit matters more than short-term hype.`,
+        "You are likely to perform best in structured environments with visible progress and clear milestones.",
+        "You can build momentum fast by testing focused paths instead of exploring too many options at once."
+      ],
+      strength_breakdown: {
+        analytical: "Moderate to strong; you prefer clarity and practical logic before committing.",
+        risk_tolerance: "Balanced; open to growth when risk is manageable and outcomes are visible.",
+        social_energy: "Context-dependent; strongest in goal-oriented collaboration.",
+        creativity_drive: "Applied creativity; you prefer useful ideas over abstract experimentation.",
+        execution_consistency: "Good potential with simple systems, weekly review, and measurable targets."
+      },
+      career_family: {
+        primary: "Structured professional tracks",
+        secondary: "Applied technical or analytical roles",
+        parallel: "People-impact roles with stable progression"
+      },
+      risk_stability_meter: {
+        risk_score: "Moderate",
+        stability_score: "High",
+        note: "You can take calculated risks, but stability and direction remain your core anchors."
+      },
+      week_1_challenge: [
+        "Shortlist 3 role clusters aligned to your preferences and remove 2 obvious misfits.",
+        "Talk to 2 people already in those roles and note required skills + timeline.",
+        "Start one 7-day action plan with daily 45-60 minute focused work blocks."
+      ]
+    }
+  };
+}
+
+function buildFallbackNoGoalCareerTable(payload = {}) {
+  const q2 = Array.isArray(payload.question2) ? payload.question2 : [];
+  const q3 = Array.isArray(payload.question3) ? payload.question3 : [];
+  const anchor = q2[0] || "practical career outcomes";
+  const success = q3[0] || "stable growth";
+
+  return {
+    career_match_table: [
+      {
+        career_cluster: "Government & Public Service Tracks",
+        why_it_fits_you: `Aligns with your preference for ${success} and clear exam-driven progression.`,
+        sample_roles: ["Civil Services", "State PSC Roles", "SSC / Banking Officer"],
+        match_score: "84%"
+      },
+      {
+        career_cluster: "Applied Healthcare & Allied Services",
+        why_it_fits_you: `Lets you convert ${anchor} into impact-oriented work with strong demand.`,
+        sample_roles: ["Allied Health Professional", "Public Health Operations", "Medical Lab Specialist"],
+        match_score: "81%"
+      },
+      {
+        career_cluster: "Data-Enabled Professional Roles",
+        why_it_fits_you: "Good fit if you want measurable progress, skill stacking, and flexible career mobility.",
+        sample_roles: ["Data Analyst", "Operations Analyst", "Business Intelligence Associate"],
+        match_score: "78%"
+      }
+    ]
+  };
+}
+
+function buildFallbackAlternativeGoals(payload = {}) {
+  const goal = String(payload?.goal || "your goal").trim();
+  const reason = String(payload?.reason || "current constraints").trim();
+
+  return {
+    alternative_goals_result: {
+      alternative_paths: [
+        `Keep "${goal}" as long-term target, but split it into phase-wise milestones over 12-24 months.`,
+        `Use low-cost preparation route first (official syllabus, past papers, free mock tests, peer groups).`,
+        `Adopt a dual-track strategy: primary prep for "${goal}" plus one employable skill backup path.`,
+        `Create a strict weekly review system focused on weak areas linked to: ${reason}.`
+      ],
+      similar_goals: [
+        "A closely related domain role with lower entry barrier but similar long-term growth.",
+        "A parallel professional path where your existing preparation is still reusable.",
+        "A skills-first route that can later bridge back into your original goal.",
+        "A stable backup career with predictable progression and strong employability."
+      ]
+    }
+  };
 }
 
 /* ================= NORMALIZATION ================= */
@@ -251,7 +495,7 @@ function normalizeUserPayload(body) {
 function saveResponseToFile(data) {
   const filePath = path.join(__dirname, 'response.json');
   fs.writeFileSync(filePath, JSON.stringify(data, null, 4), 'utf-8');
-  console.log('✅ Response saved to response.json');
+  console.log('âœ… Response saved to response.json');
 }
 
 /* ================= AUTHENTICATION ENDPOINTS ================= */
@@ -588,10 +832,10 @@ app.post('/api/infinigram/profile/update', (req, res) => {
 app.get('/api/infinigram/search/users/:query', (req, res) => {
   try {
     const { query } = req.params;
-    console.log(`🔍 Search request for: "${query}"`);
+    console.log(`ðŸ” Search request for: "${query}"`);
     
     const users = loadUsers();
-    console.log(`📊 Total users in database: ${Object.keys(users).length}`);
+    console.log(`ðŸ“Š Total users in database: ${Object.keys(users).length}`);
     
     const results = [];
 
@@ -601,7 +845,7 @@ app.get('/api/infinigram/search/users/:query', (req, res) => {
       if (user && user.username) {
         console.log(`  Checking user: ${user.username} (${email})`);
         if (user.username.toLowerCase().includes(query.toLowerCase())) {
-          console.log(`  ✅ Match found: ${user.username}`);
+          console.log(`  âœ… Match found: ${user.username}`);
           results.push({
             id: user.id,
             email: email,
@@ -616,13 +860,13 @@ app.get('/api/infinigram/search/users/:query', (req, res) => {
       }
     }
 
-    console.log(`✅ Search returned ${results.length} results for "${query}"`);
+    console.log(`âœ… Search returned ${results.length} results for "${query}"`);
     return res.json({
       success: true,
       results: results
     });
   } catch (err) {
-    console.error('❌ Error searching users:', err);
+    console.error('âŒ Error searching users:', err);
     res.status(500).json({ success: false, error: 'Search failed: ' + err.message });
   }
 });
@@ -631,7 +875,7 @@ app.get('/api/infinigram/search/users/:query', (req, res) => {
 app.post('/api/infinigram/follow/request', (req, res) => {
   try {
     const { fromEmail, toEmail } = req.body;
-    console.log(`📤 Follow request from ${fromEmail} to ${toEmail}`);
+    console.log(`ðŸ“¤ Follow request from ${fromEmail} to ${toEmail}`);
 
     if (!fromEmail || !toEmail) {
       return res.status(400).json({ success: false, error: 'fromEmail and toEmail required' });
@@ -641,26 +885,26 @@ app.post('/api/infinigram/follow/request', (req, res) => {
 
     // Check if both users exist
     if (!users[fromEmail]?.infinigram || !users[toEmail]?.infinigram) {
-      console.log(`❌ User not found: ${fromEmail} or ${toEmail}`);
+      console.log(`âŒ User not found: ${fromEmail} or ${toEmail}`);
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
     // Prevent self-follow
     if (fromEmail === toEmail) {
-      console.log(`❌ Cannot follow yourself`);
+      console.log(`âŒ Cannot follow yourself`);
       return res.status(400).json({ success: false, error: 'Cannot follow yourself' });
     }
 
     // Check if already following
     if (users[fromEmail].infinigram.followingList?.includes(toEmail)) {
-      console.log(`❌ Already following`);
+      console.log(`âŒ Already following`);
       return res.status(400).json({ success: false, error: 'Already following this user' });
     }
 
     // Check if request already pending
     const recipientPending = users[toEmail].infinigram.pendingFollowRequests || [];
     if (recipientPending.includes(fromEmail)) {
-      console.log(`❌ Request already pending`);
+      console.log(`âŒ Request already pending`);
       return res.status(400).json({ success: false, error: 'Follow request already sent' });
     }
 
@@ -682,13 +926,13 @@ app.post('/api/infinigram/follow/request', (req, res) => {
       targetUser: users[toEmail].infinigram.username
     });
 
-    console.log(`✅ Follow request sent successfully`);
+    console.log(`âœ… Follow request sent successfully`);
     return res.json({
       success: true,
       message: 'Follow request sent'
     });
   } catch (err) {
-    console.error('❌ Error sending follow request:', err);
+    console.error('âŒ Error sending follow request:', err);
     res.status(500).json({ success: false, error: 'Failed to send follow request: ' + err.message });
   }
 });
@@ -697,7 +941,7 @@ app.post('/api/infinigram/follow/request', (req, res) => {
 app.post('/api/infinigram/follow/accept', (req, res) => {
   try {
     const { fromEmail, toEmail } = req.body;
-    console.log(`📥 Accept follow request from ${fromEmail} to ${toEmail}`);
+    console.log(`ðŸ“¥ Accept follow request from ${fromEmail} to ${toEmail}`);
 
     if (!fromEmail || !toEmail) {
       return res.status(400).json({ success: false, error: 'fromEmail and toEmail required' });
@@ -737,21 +981,21 @@ app.post('/api/infinigram/follow/accept', (req, res) => {
     // Bidirectional: User1 (fromEmail) follows User2 (toEmail)
     if (!users[toEmail].infinigram.followersList.includes(fromEmail)) {
       users[toEmail].infinigram.followersList.push(fromEmail);
-      console.log(`  ✅ Added ${fromEmail} to ${toEmail}'s followersList`);
+      console.log(`  âœ… Added ${fromEmail} to ${toEmail}'s followersList`);
     }
     if (!users[fromEmail].infinigram.followingList.includes(toEmail)) {
       users[fromEmail].infinigram.followingList.push(toEmail);
-      console.log(`  ✅ Added ${toEmail} to ${fromEmail}'s followingList`);
+      console.log(`  âœ… Added ${toEmail} to ${fromEmail}'s followingList`);
     }
 
     // Bidirectional: User2 (toEmail) follows User1 (fromEmail) back
     if (!users[fromEmail].infinigram.followersList.includes(toEmail)) {
       users[fromEmail].infinigram.followersList.push(toEmail);
-      console.log(`  ✅ Added ${toEmail} to ${fromEmail}'s followersList`);
+      console.log(`  âœ… Added ${toEmail} to ${fromEmail}'s followersList`);
     }
     if (!users[toEmail].infinigram.followingList.includes(fromEmail)) {
       users[toEmail].infinigram.followingList.push(fromEmail);
-      console.log(`  ✅ Added ${fromEmail} to ${toEmail}'s followingList`);
+      console.log(`  âœ… Added ${fromEmail} to ${toEmail}'s followingList`);
     }
 
     // Update counts for both users
@@ -781,7 +1025,7 @@ app.post('/api/infinigram/follow/accept', (req, res) => {
       followedBy: users[toEmail].infinigram.username
     });
 
-    console.log(`✅ Bidirectional follow created between ${fromEmail} and ${toEmail}`);
+    console.log(`âœ… Bidirectional follow created between ${fromEmail} and ${toEmail}`);
     return res.json({
       success: true,
       message: 'Follow request accepted - bidirectional follow created'
@@ -1212,7 +1456,7 @@ app.post('/api/infinigram/upload', (req, res) => {
       });
     }
 
-    console.log(`📤 Uploading file: ${fileName} (${mediaType})`);
+    console.log(`ðŸ“¤ Uploading file: ${fileName} (${mediaType})`);
 
     // Determine subdirectory
     let subDir = 'documents';
@@ -1243,11 +1487,11 @@ app.post('/api/infinigram/upload', (req, res) => {
       }
     }
     
-    console.log(`🔍 Received file data length: ${fileData.length}`);
-    console.log(`🔧 Extracted base64 length: ${base64String.length}`);
+    console.log(`ðŸ” Received file data length: ${fileData.length}`);
+    console.log(`ðŸ”§ Extracted base64 length: ${base64String.length}`);
     
     if (!base64String || base64String.length < 10) {
-      console.error(`❌ Invalid base64 data - too short (${base64String.length} chars)`);
+      console.error(`âŒ Invalid base64 data - too short (${base64String.length} chars)`);
       return res.status(400).json({ 
         success: false, 
         error: 'Invalid base64 data format - data too short' 
@@ -1256,14 +1500,14 @@ app.post('/api/infinigram/upload', (req, res) => {
     
     try {
       const binaryData = Buffer.from(base64String, 'base64');
-      console.log(`✅ Binary data size: ${binaryData.length} bytes`);
+      console.log(`âœ… Binary data size: ${binaryData.length} bytes`);
       
       if (binaryData.length < 100) {
-        console.warn(`⚠️  Warning: Binary data is very small (${binaryData.length} bytes) - file might be corrupted`);
+        console.warn(`âš ï¸  Warning: Binary data is very small (${binaryData.length} bytes) - file might be corrupted`);
       }
       
       fs.writeFileSync(filePath, binaryData);
-      console.log(`✅ File written to: ${filePath}`);
+      console.log(`âœ… File written to: ${filePath}`);
     } catch (bufferErr) {
       console.error('Error converting base64 to binary:', bufferErr);
       return res.status(400).json({ 
@@ -1280,7 +1524,7 @@ app.post('/api/infinigram/upload', (req, res) => {
     
     // Verify file was written
     if (!fs.existsSync(filePath)) {
-      console.error(`❌ File was not created at ${filePath}`);
+      console.error(`âŒ File was not created at ${filePath}`);
       return res.status(500).json({ 
         success: false, 
         error: 'File was created but verification failed' 
@@ -1288,9 +1532,9 @@ app.post('/api/infinigram/upload', (req, res) => {
     }
     
     const fileStats = fs.statSync(filePath);
-    console.log(`✅ File saved: ${fileUrl}`);
-    console.log(`✅ File size: ${fileStats.size} bytes`);
-    console.log(`✅ Full URL for client: ${fullFileUrl}`);
+    console.log(`âœ… File saved: ${fileUrl}`);
+    console.log(`âœ… File size: ${fileStats.size} bytes`);
+    console.log(`âœ… Full URL for client: ${fullFileUrl}`);
 
     return res.json({
       success: true,
@@ -1536,9 +1780,13 @@ app.post("/api/no-goal-summary", async (req, res) => {
     return res.json({ success: true, ...result });
   } catch (err) {
     console.error("Error generating no-goal summary:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Failed to generate personalized summary"
+    const payload = req.body || {};
+    const fallback = buildFallbackNoGoalSummary(payload);
+    return res.json({
+      success: true,
+      degraded: true,
+      warning: "AI quota reached. Returned fallback summary.",
+      ...fallback
     });
   }
 });
@@ -1550,9 +1798,13 @@ app.post("/api/no-goal-career-table", async (req, res) => {
     return res.json({ success: true, ...result });
   } catch (err) {
     console.error("Error generating no-goal career table:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Failed to generate career matches"
+    const payload = req.body || {};
+    const fallback = buildFallbackNoGoalCareerTable(payload);
+    return res.json({
+      success: true,
+      degraded: true,
+      warning: "AI quota reached. Returned fallback career matches.",
+      ...fallback
     });
   }
 });
@@ -1563,12 +1815,17 @@ app.post("/api/stuck-goal-solutions", async (req, res) => {
   try {
     const payload = req.body || {};
     const result = await runPrompt(buildStuckSolutionsPrompt(payload), 2600);
-    return res.json({ success: true, ...result });
+    const normalized = normalizeStuckSolutionPack(payload, result);
+    return res.json({ success: true, ...normalized });
   } catch (err) {
     console.error("Error generating stuck-goal solutions:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Failed to generate stuck-goal solutions"
+    const payload = req.body || {};
+    const fallback = normalizeStuckSolutionPack(payload, {});
+    return res.json({
+      success: true,
+      degraded: true,
+      warning: "AI quota reached. Returned fallback stuck-goal solutions.",
+      ...fallback
     });
   }
 });
@@ -1582,9 +1839,13 @@ app.post("/api/alternative-goals", async (req, res) => {
     return res.json({ success: true, ...result });
   } catch (err) {
     console.error("Error generating alternative goals:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Failed to generate alternative goals"
+    const payload = req.body || {};
+    const fallback = buildFallbackAlternativeGoals(payload);
+    return res.json({
+      success: true,
+      degraded: true,
+      warning: "AI quota reached. Returned fallback alternative goals.",
+      ...fallback
     });
   }
 });
@@ -1596,7 +1857,7 @@ const progressStore = {};
 app.get("/api/know-goal-progress/:requestId", (req, res) => {
   const { requestId } = req.params;
   const progress = progressStore[requestId] || { completedSections: 0, currentSection: 0, status: 'pending' };
-  console.log(`📊 Polling progress for ${requestId}:`, progress);
+  console.log(`ðŸ“Š Polling progress for ${requestId}:`, progress);
   res.json(progress);
 });
 
@@ -1607,7 +1868,7 @@ app.post("/api/know-goal-dont-know-start", async (req, res) => {
 
     // Generate unique request ID for this generation
     const requestId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
-    console.log(`📌 Generated requestId: ${requestId}`);
+    console.log(`ðŸ“Œ Generated requestId: ${requestId}`);
 
     progressStore[requestId] = { completedSections: 0, currentSection: 0, status: 'starting', requestId };
 
@@ -1648,7 +1909,7 @@ app.post("/api/know-goal-dont-know-start", async (req, res) => {
         const finalResult = {};
 
         for (let section = 1; section <= 9; section++) {
-          console.log(`🔄 Generating section ${section}...`);
+          console.log(`ðŸ”„ Generating section ${section}...`);
 
           // Update progress - section is currently being processed
           progressStore[requestId] = {
@@ -1659,7 +1920,7 @@ app.post("/api/know-goal-dont-know-start", async (req, res) => {
             requestId
           };
 
-          console.log(`📊 Updated progress store for ${requestId}:`, progressStore[requestId]);
+          console.log(`ðŸ“Š Updated progress store for ${requestId}:`, progressStore[requestId]);
 
           const sectionData = await runPrompt(
             buildSectionPrompt(section, user),
@@ -1676,7 +1937,7 @@ app.post("/api/know-goal-dont-know-start", async (req, res) => {
             requestId
           };
 
-          console.log(`✅ Section ${section} complete. Updated progress:`, progressStore[requestId]);
+          console.log(`âœ… Section ${section} complete. Updated progress:`, progressStore[requestId]);
         }
 
         // Save response to file
@@ -1695,10 +1956,11 @@ app.post("/api/know-goal-dont-know-start", async (req, res) => {
         console.log("All sections complete. Progress store:", progressStore[requestId]);
 
       } catch (err) {
-        console.error("❌ AI ERROR in background:", err.message);
+        console.error("âŒ AI ERROR in background:", err.message);
+        const previous = progressStore[requestId] || {};
         progressStore[requestId] = {
-          completedSections: 0,
-          currentSection: 0,
+          completedSections: typeof previous.completedSections === 'number' ? previous.completedSections : 0,
+          currentSection: typeof previous.currentSection === 'number' ? previous.currentSection : 0,
           status: 'failed',
           error: err.message,
           requestId
@@ -1707,7 +1969,7 @@ app.post("/api/know-goal-dont-know-start", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ SETUP ERROR:", err.message);
+    console.error("âŒ SETUP ERROR:", err.message);
     res.status(500).json({ success: false, error: "Setup failed", message: err.message });
   }
 });
@@ -1725,7 +1987,7 @@ app.use((req, res, next) => {
 app.get('/api/infinigram/messages/list/:email', (req, res) => {
   try {
     const { email } = req.params;
-    console.log(`📬 Getting message list for ${email}`);
+    console.log(`ðŸ“¬ Getting message list for ${email}`);
 
     const users = loadUsers();
     const currentUser = users[email]?.infinigram;
@@ -1753,13 +2015,13 @@ app.get('/api/infinigram/messages/list/:email', (req, res) => {
       }
     }
 
-    console.log(`✅ Found ${mutualFollows.length} mutual follows for ${email}`);
+    console.log(`âœ… Found ${mutualFollows.length} mutual follows for ${email}`);
     return res.json({
       success: true,
       contacts: mutualFollows
     });
   } catch (err) {
-    console.error('❌ Error getting message list:', err);
+    console.error('âŒ Error getting message list:', err);
     res.status(500).json({ success: false, error: 'Failed to get message list' });
   }
 });
@@ -1768,7 +2030,7 @@ app.get('/api/infinigram/messages/list/:email', (req, res) => {
 app.get('/api/infinigram/messages/:email/:otherEmail', (req, res) => {
   try {
     const { email, otherEmail } = req.params;
-    console.log(`💬 Getting chat history between ${email} and ${otherEmail}`);
+    console.log(`ðŸ’¬ Getting chat history between ${email} and ${otherEmail}`);
 
     const users = loadUsers();
     const currentUser = users[email]?.infinigram;
@@ -1797,7 +2059,7 @@ app.get('/api/infinigram/messages/:email/:otherEmail', (req, res) => {
       (msg.fromEmail === otherEmail && msg.toEmail === email)
     ).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-    console.log(`✅ Found ${chatMessages.length} messages in chat`);
+    console.log(`âœ… Found ${chatMessages.length} messages in chat`);
     return res.json({
       success: true,
       messages: chatMessages,
@@ -1808,7 +2070,7 @@ app.get('/api/infinigram/messages/:email/:otherEmail', (req, res) => {
       }
     });
   } catch (err) {
-    console.error('❌ Error getting chat history:', err);
+    console.error('âŒ Error getting chat history:', err);
     res.status(500).json({ success: false, error: 'Failed to get chat history' });
   }
 });
@@ -1817,7 +2079,7 @@ app.get('/api/infinigram/messages/:email/:otherEmail', (req, res) => {
 app.post('/api/infinigram/messages/send', (req, res) => {
   try {
     const { fromEmail, toEmail, text } = req.body;
-    console.log(`📤 Message from ${fromEmail} to ${toEmail}`);
+    console.log(`ðŸ“¤ Message from ${fromEmail} to ${toEmail}`);
 
     if (!fromEmail || !toEmail || !text || !text.trim()) {
       return res.status(400).json({ success: false, error: 'Missing required fields' });
@@ -1886,13 +2148,13 @@ app.post('/api/infinigram/messages/send', (req, res) => {
 
     saveUsers(users);
 
-    console.log(`✅ Message sent from ${fromEmail} to ${toEmail}`);
+    console.log(`âœ… Message sent from ${fromEmail} to ${toEmail}`);
     return res.json({
       success: true,
       message: message
     });
   } catch (err) {
-    console.error('❌ Error sending message:', err);
+    console.error('âŒ Error sending message:', err);
     res.status(500).json({ success: false, error: 'Failed to send message' });
   }
 });
@@ -1921,7 +2183,7 @@ app.post('/api/infinigram/messages/read', (req, res) => {
       message: 'Message marked as read'
     });
   } catch (err) {
-    console.error('❌ Error marking message as read:', err);
+    console.error('âŒ Error marking message as read:', err);
     res.status(500).json({ success: false, error: 'Failed to mark message as read' });
   }
 });
@@ -1947,13 +2209,13 @@ app.post('/api/infinigram/notifications/delete', (req, res) => {
 
     saveUsers(users);
 
-    console.log(`✅ Notification ${notificationId} deleted for ${email}`);
+    console.log(`âœ… Notification ${notificationId} deleted for ${email}`);
     return res.json({
       success: true,
       message: 'Notification deleted'
     });
   } catch (err) {
-    console.error('❌ Error deleting notification:', err);
+    console.error('âŒ Error deleting notification:', err);
     res.status(500).json({ success: false, error: 'Failed to delete notification' });
   }
 });
@@ -1962,9 +2224,9 @@ app.post('/api/infinigram/notifications/delete', (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📁 Users file: ${USERS_FILE}`);
-  console.log(`📁 Activities file: ${ACTIVITIES_FILE}`);
+  console.log(`ðŸš€ Server running on port ${PORT}`);
+  console.log(`ðŸ“ Users file: ${USERS_FILE}`);
+  console.log(`ðŸ“ Activities file: ${ACTIVITIES_FILE}`);
 });
 
 app.use("/api/*", (_req, res) => {
@@ -1977,3 +2239,4 @@ app.use((err, _req, res, _next) => {
   }
   return res.status(500).json({ success: false, error: "Internal server error" });
 });
+

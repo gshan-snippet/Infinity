@@ -382,7 +382,7 @@ const DiscoverGoal = () => {
       <AnimatePresence>
         {summaryOpen && summaryData && (
           <motion.div
-            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -391,7 +391,7 @@ const DiscoverGoal = () => {
               initial={{ scale: 0.96, y: 10 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.96, y: 10 }}
-              className="w-full max-w-2xl rounded-2xl border border-white/40 bg-white/95 shadow-2xl p-6"
+              className="w-full max-w-2xl rounded-2xl border border-white/40 bg-white/95 shadow-2xl p-6 max-h-[92vh] overflow-y-auto my-6"
             >
               <h2 className="text-2xl font-bold text-slate-900 mb-2">
                 {summaryData.title || "Based on your answers, here's what we understand about you"}
